@@ -3,11 +3,14 @@
 
 module Main where
 
+import Prelude hiding (lookup)
+
 import Control.Lens ( (^..) )
 import Control.Monad.Reader (runReaderT, ask, ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson ( Value(..) )
 import Data.Aeson.Lens (key, _Bool, _String, _Array, values)
+import Data.HashMap.Strict (HashMap(..), elems, keys, lookup)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ( (<>) )
 import qualified Data.Text as T
@@ -47,6 +50,27 @@ c = putStrLn
 processTable (String tableName) = do
   lift $ putStr "Processing simple definition: "
   lift $ print tableName
+  exportSql $ "COPY " <> tableName <> " TO '" <> dumpDir <> "/" <> tableName <> ".dump';"
+  importSql $ "COPY " <> tableName <> " FROM '" <> dumpDir <> "/" <> tableName <> ".dump';"
+
+-- Object (fromList [("accounts",Object (fromList [("shrink",String "select * from accounts where tier = 1 union select * from accounts where id in (select followed_account_id from followers where follower_id = 225239379) union select * from accounts where id in (select follower_id from followers where followed_account_id = 225239379)"),("requires",String "sectors")]))])
+
+processTable (Object (l :: HashMap T.Text Value)) = do
+  lift $ putStr "WARNING: unhandled object list syntax: "
+  -- assert l is an object with one entry
+  lift $ print $ l
+  let tableName = (head $ keys l)
+  lift $ print tableName
+  let (Object def) = (head $ elems l)
+  lift $ print def
+  let (Just (String shrink)) = lookup "shrink" def
+  let requires = lookup "requires" def
+  lift $ do
+    putStr "Shrink: "
+    print shrink
+    putStr "Requires: "
+    print requires
+  exportSql $ "CREATE TEMPORARY TABLE " <> tableName <> " AS " <> shrink <> ";"
   exportSql $ "COPY " <> tableName <> " TO '" <> dumpDir <> "/" <> tableName <> ".dump';"
   importSql $ "COPY " <> tableName <> " FROM '" <> dumpDir <> "/" <> tableName <> ".dump';"
 
