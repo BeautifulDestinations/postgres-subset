@@ -31,6 +31,7 @@ executable postgres-subset
                      , mtl
                      , text
                      , unordered-containers
+                     , vector
                      , yaml
   default-language:    Haskell2010
 
