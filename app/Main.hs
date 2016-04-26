@@ -21,6 +21,7 @@ import Data.Yaml
 import System.IO (Handle, openFile, IOMode(..), hClose, hPutStrLn)
 import Lib
 
+tablesFilename = "tables.yaml"
 dumpDir = "/home/benc/tmp/smalldump/"
 
 data Environment = Environment
@@ -37,27 +38,32 @@ data TableSpec = TableSpec
 
 main :: IO ()
 main = do
-  c "sql import/export generator"
-  exportHandle <- openFile "export.sql" WriteMode
-  importHandle <- openFile "import.sql" WriteMode
-  tablesYaml :: Value <- fromMaybe
-                           (error "Cannot parse tables file")
-                       <$> decodeFile "tables.yaml"
-  c "Tables YAML:"
-  let tableDefs = tablesYaml ^.. key "tables" . values
+  progress "postgres-subset"
 
-  let env = Environment exportHandle importHandle
-  (flip runReaderT) env $ do
+  withEnvironment $ do
+
+    tablesYaml :: Value <- fromMaybe
+                             (error "Cannot parse tables file")
+                          <$> (lift . decodeFile) tablesFilename
+    let tableDefs = tablesYaml ^.. key "tables" . values
     tableDefs' <- for tableDefs parseTable
-    tableDefs'' <- lift $ orderByRequires tableDefs'
+    tableDefs'' <- orderByRequires tableDefs'
     for tableDefs'' processTable
 
-  c "done."
+  progress "done."
+
+withEnvironment :: ReaderT Environment IO a -> IO a
+withEnvironment a = do
+  exportHandle <- openFile "export.sql" WriteMode
+  importHandle <- openFile "import.sql" WriteMode
+  let env = Environment exportHandle importHandle
+  v <- runReaderT a env
   hClose exportHandle
   hClose importHandle
+  return v
 
-c :: String -> IO ()
-c = putStrLn
+progress :: String -> IO ()
+progress = putStrLn
 
 parseTable :: Value -> ReaderT Environment IO TableSpec
 parseTable (String tableName) = return $ TableSpec
@@ -67,12 +73,8 @@ parseTable (String tableName) = return $ TableSpec
   }
 
 parseTable (Object (l :: HashMap T.Text Value)) = do
-  lift $ putStr "Processing map definition: "
-  lift $ print $ l
   let tableName = (head $ keys l)
-  lift $ print tableName
   let (Object def) = (head $ elems l)
-  lift $ print def
 
   shrinkSql <- case lookup "shrink" def of
     Nothing -> do lift $ putStrLn "Not shrinking this table"
@@ -100,8 +102,7 @@ parseTable x = error $ "WARNING: unknown table definition synax: " <> show x
 
 processTable tspec = do
   let tableName = _tableName tspec
-  lift $ putStr "Processing table definition: "
-  lift $ print (_tableName tspec)
+  lift $ progress $ "Processing table definition: " <> (show $ _tableName tspec)
   case (_shrink tspec) of
     Nothing -> lift $ putStrLn "Not shrinking this table"
     (Just shrinkSql) -> do
@@ -125,27 +126,26 @@ importSql s = do
 
 
 -- | Sorts the supplied tables by the requirements field.
-orderByRequires :: [TableSpec] -> IO [TableSpec]
-orderByRequires ts = internalOrderByRequires [] [] ts
+-- Probably loops forever if the requirements do not form a
+-- partial order.
+orderByRequires :: [TableSpec] -> ReaderT Environment IO [TableSpec]
+orderByRequires ts = o [] ts
   where
-    internalOrderByRequires :: [T.Text] -> [T.Text] -> [TableSpec] -> IO [TableSpec]
-    internalOrderByRequires _ _ [] = return []
-    internalOrderByRequires _ _ [x] = return [x]
-                                        -- don't check the requirements on 
-                                        -- the final case, because we 
-                                        -- assume that the partial order is
-                                        --  actually a partial order.
-    internalOrderByRequires done inprogress (x:xs) = do
-      -- Are all the requirements done already? If so, output x.
-      -- Otherwise, punt x to the end, and recurse without shortening the
-      -- list, so that in the case of an inconsistent partial order, we'll
-      -- loop forever.
-      let kl = (nub (map (\x -> x `elem` done) (_requires x)))
-      putStrLn $ "kl = " <> show kl
-      if not (False `elem` kl)
+    o :: [T.Text] -> [TableSpec] -> ReaderT Environment IO [TableSpec]
+    o _ [] = return []
+    o _ [t] = return [t]
+    o done (t:ts) = do
+
+      -- check that all requirements are in the `done` list already.
+      let isDone t' = t' `elem` done
+      let satisfied = not (False `elem` (nub (map isDone (_requires t))))
+
+      -- if requirements are not all done, punt this element to the
+      -- end.
+      if satisfied
         then do
-          putStrLn "SHRINK"
-          subs <- internalOrderByRequires ((_tableName x):done) inprogress xs
-          return $ x : subs
-        else if False && (_tableName x) `elem` inprogress then error ("LOOP: " <> (show $ _tableName x) <> ", in progress = " <> show inprogress <> ", done = " <> show done) else (putStrLn $ "PERMUTE " <> show x <> ", done = " <> show done <> ", inprogress = " <> show inprogress) >> (internalOrderByRequires done ((_tableName x):inprogress) (xs ++ [x]))
+          lift $ putStrLn $ "Dependencies satisfied for table " <> (show $ _tableName t)
+          subs <- o ((_tableName t):done) ts
+          return $ t : subs
+        else (lift $ putStrLn $ "Deferring " <> show t <> ", done = " <> show done) >> (o done (ts ++ [t]))
 
