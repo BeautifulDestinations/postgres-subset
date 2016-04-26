@@ -1,0 +1,140 @@
+# list all tables that should be
+# transported to the small database.
+tables:
+ - accounts:
+     shrink: "tier = 1 union select * from accounts where id in (select followed_account_id from followers where follower_id = 225239379) union select * from accounts where id in (select follower_id from followers where followed_account_id = 225239379)"
+     requires: sectors
+ - posts:
+     shrink: "account_id in (select id from accounts) and created_at > now() - interval '6 months'"
+     requires: accounts
+ - airbnb_posts
+ - competitors:
+     shrink: "main_account_id in (select id from accounts) and competitor_account_id in (select id from accounts)"
+     requires: accounts
+ - extra_rtlikes:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - feature_sets
+ - json_cache:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - lr_labels
+ - lr_images
+ - access_tokens:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - ad_campaigns:
+     requires: accounts
+ - analytics_cred:
+     requires: accounts
+ - ad_accounts:
+     requires: accounts
+ - users:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - ad_insights:
+     requires: ads
+ - features
+ - internal_events_search_performed:
+     requires: internal_queries
+ - feature_set_data
+ - ads:
+     requires: ad_campaigns
+ - analytics_data
+ - ad_pulse:
+     requires: ads
+ - facebook_access_tokens
+ - featuresbin:
+     shrink: "post_id in (select id from posts) and account_id in (select id from accounts)"
+     requires:
+       - posts
+       - accounts
+ - followers:
+     shrink: "followed_account_id = 225239379"
+     requires: accounts
+ - hashtag_posts:
+     shrink: "post_id in (select id from posts)"
+     requires: posts
+ - images:
+     shrink: "ig_post_id in (select id from posts)"
+     requires: posts
+ - fragments
+ - first_name_genders
+ - internal_events_account_in_group:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - internal_events_post_sent_to_client2:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - internal_events_post_sent_to_client:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - internal_events_group_exists
+ - counts:
+     shrink: "account_id in (select id from accounts) and count_at > now() - interval '6 months'"
+     requires: accounts
+ - bio_changes:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+# although like_counts does not have a foreign key against posts,
+# it probably makes sense to shrink it to the selected post set
+# and perhaps to 6 months. Maybe a ticket should be opened about
+# that foreign key constraint
+ - like_counts:
+     shrink: "post_id in (select id from posts)"
+     requires: posts
+ - shoutout_predictions:
+     shrink: "post_id in (select id from posts) and target_acc_id in (select id from accounts)"
+     requires:
+       - posts
+       - accounts
+ - login_sessions:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - comments:
+     shrink: "post_id in (select id from posts) and commenter_account_id in (select id from accounts) and created_at > now() - interval '6 months'"
+     requires:
+       - posts
+       - accounts
+ - likes:
+     shrink: "post_id in (select id from posts) and liker_account_id in (select id from accounts)"
+     requires:
+       - posts
+       - accounts
+ - temporary_tracking:
+     shrink: "account_id in (select id from posts)"
+     requires: accounts
+ - lr_image_labels
+ - user_tagged:
+     shrink: "post_id in (select id from posts) and tagged_user_id in (select id from accounts)"
+     requires:
+       - posts
+       - accounts
+ - live_cont_predictions:
+     shrink: "post_id in (select id from posts) and account_id in (select id from accounts)"
+     requires:
+       - accounts
+       - posts
+ - lr_session_data
+ - mask_distances
+ - migrations
+ - live_cat_predictions:
+     shrink: "post_id in (select id from posts) and account_id in (select id from accounts)"
+     requires:
+       - accounts
+       - posts
+ - username_changes:
+     shrink: "account_id in (select id from accounts)"
+     requires: accounts
+ - scheduled_posts
+ - tags_to_fetch
+ - user_follow_events
+ - user_likes:
+     shrink: "post_id in (select id from posts) and liker_account_id in (select id from accounts)"
+     requires:
+       - accounts
+       - posts
+ - internal_queries
+ - sectors
+ - foo
+ - bar
