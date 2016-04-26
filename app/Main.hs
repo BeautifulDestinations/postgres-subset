@@ -106,7 +106,7 @@ processTable tspec = do
     Nothing -> lift $ putStrLn "Not shrinking this table"
     (Just shrinkSql) -> do
       lift $ putStrLn $ "Shrink SQL: " <> show shrinkSql
-      exportSql $ "CREATE TEMPORARY TABLE " <> tableName <> " AS " <> shrinkSql <> ";"
+      exportSql $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql <> ";"
 
   lift $ putStrLn $ "Requires: " <> show (_requires tspec)
   exportSql $ "COPY " <> tableName <> " TO '" <> dumpDir <> "/" <> tableName <> ".dump';"
