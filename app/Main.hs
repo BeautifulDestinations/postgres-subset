@@ -74,15 +74,12 @@ parseTable (Object (l :: HashMap T.Text Value)) = do
   let (Object def) = (head $ elems l)
   lift $ print def
 
-  -- TODO: shrink needs to be optional.
   shrinkSql <- case lookup "shrink" def of
     Nothing -> do lift $ putStrLn "Not shrinking this table"
                   return Nothing
     (Just (String s)) -> do
       lift $ putStrLn $ "Shrink SQL: " <> show s
       return $ Just s
-
---      exportSql $ "CREATE TEMPORARY TABLE " <> tableName <> " AS " <> shrinkSql <> ";"
 
     Just x -> error $ "Unknown shrink syntax: " <> show x
 
