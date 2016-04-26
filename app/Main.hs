@@ -18,17 +18,37 @@ import qualified Data.Text as T
 import Data.Traversable (for)
 import qualified Data.Vector as V
 import Data.Yaml
+import Options.Applicative (strOption, long, metavar, help,
+                            execParser, info, helper, fullDesc, progDesc, header)
+import qualified Options.Applicative as Optparse
 import System.IO (Handle, openFile, IOMode(..), hClose, hPutStrLn)
 import Lib
 
-tablesFilename = "tables.yaml"
-dumpDir = "/home/benc/tmp/smalldump/"
+data CommandLine = CommandLine
+  {
+    _dataDir :: T.Text
+  , _tablesFilename :: String
+  }
+
+commandLineOptions :: Optparse.Parser CommandLine
+commandLineOptions = CommandLine
+  <$> (T.pack <$> (strOption ( long "directory"
+                <> metavar "DIRECTORY"
+                <> help "Directory for dump files"
+                )))
+  <*> strOption ( long "tables"
+                <> metavar "YAML-FILE"
+                <> help "Table definitions file"
+                )
 
 data Environment = Environment
   { _exportHandle :: Handle
   , _importHandle :: Handle
+  , _commandline :: CommandLine
   }
 
+getTablesFilename = (_tablesFilename . _commandline) <$> ask
+getDataDir = (_dataDir . _commandline) <$> ask
 
 data TableSpec = TableSpec
   { _tableName :: T.Text,
@@ -43,7 +63,7 @@ main = do
   withEnvironment $ do
 
     importSql "\\set ON_ERROR_STOP on"
-
+    tablesFilename <- getTablesFilename
     tablesYaml :: Value <- fromMaybe
                              (error "Cannot parse tables file")
                           <$> (lift . decodeFile) tablesFilename
@@ -56,9 +76,14 @@ main = do
 
 withEnvironment :: ReaderT Environment IO a -> IO a
 withEnvironment a = do
+  cli <- execParser $ info (helper <*> commandLineOptions)
+                 ( fullDesc
+                <> progDesc "Generate subsets of a database"
+                <> header "postgres-subset - a database subset helper"
+                 )
   exportHandle <- openFile "export.sql" WriteMode
   importHandle <- openFile "import.sql" WriteMode
-  let env = Environment exportHandle importHandle
+  let env = Environment exportHandle importHandle cli
   v <- runReaderT a env
   hClose exportHandle
   hClose importHandle
@@ -112,6 +137,7 @@ processTable tspec = do
       exportSql $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql <> ";"
 
   lift $ putStrLn $ "Requires: " <> show (_requires tspec)
+  dumpDir <- getDataDir
   exportSql $ "COPY " <> tableName <> " TO '" <> dumpDir <> "/" <> tableName <> ".dump';"
   importSql $ "COPY " <> tableName <> " FROM '" <> dumpDir <> "/" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"

@@ -29,6 +29,7 @@ executable postgres-subset
                      , lens
                      , lens-aeson
                      , mtl
+                     , optparse-applicative
                      , text
                      , unordered-containers
                      , vector
