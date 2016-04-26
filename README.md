@@ -5,24 +5,30 @@ This tool can help generate subsets of SQL databases.
 
 2. Generate import and export SQL scripts:
 
- $ mkdir /tmp/smalldump
- $ stack exec -- postgres-subset --tables ./tables.yaml --directory=/tmp/smalldump/
+```
+  $ mkdir /tmp/smalldump
+  $ stack exec -- postgres-subset --tables ./tables.yaml --directory=/tmp/smalldump/
+```
 
 3. On the exporting database:
 
- $ rm -fv /tmp/smalldump/* -vf
+```
+  $ rm -fv /tmp/smalldump/* -vf
 
- # dump the schema
- $ pg_dump --format=custom --schema-only --dbname=beautilytics > /tmp/smalldump/schema.sql
+  # dump the schema
+  $ pg_dump --format=custom --schema-only --dbname=beautilytics > /tmp/smalldump/schema.sql
 
  # dump a subset of the data
  $ psql --user=readonly beautilytics -f export.sql
+```
 
 4. On the importing database:
 
+```
  $ psql postgres -c "DROP DATABASE beautilytics"
  $ psql postgres -c "CREATE DATABASE beautilytics"
  $ pg_restore --schema-only --dbname=beautilytics --no-owner --no-acl
+```
 
 The path specified by --directory is on the database server
 for imports, and on the client for exports.
