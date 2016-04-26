@@ -16,7 +16,7 @@ This tool can help generate subsets of SQL databases.
  $ pg_dump --format=custom --schema-only --dbname=beautilytics > /tmp/smalldump/schema.sql
 
  # dump a subset of the data
- $ psql beautilytics -f export.sql 
+ $ psql --user=readonly beautilytics -f export.sql
 
 4. On the importing database:
 
@@ -24,8 +24,8 @@ This tool can help generate subsets of SQL databases.
  $ psql postgres -c "CREATE DATABASE beautilytics"
  $ pg_restore --schema-only --dbname=beautilytics --no-owner --no-acl
 
-Note that the path specified by --directory is on the database server,
-not on the client.
+The path specified by --directory is on the database server
+for imports, and on the client for exports.
 
 Approximate timings are, on Ben's computer, approximately 4 minutes
 for export and 4 minutes for import.

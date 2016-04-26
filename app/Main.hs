@@ -138,7 +138,7 @@ processTable tspec = do
 
   lift $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
-  exportSql $ "COPY " <> tableName <> " TO '" <> dumpDir <> "/" <> tableName <> ".dump';"
+  exportSql $ "\\copy " <> tableName <> " to '" <> dumpDir <> "/" <> tableName <> ".dump'"
   importSql $ "COPY " <> tableName <> " FROM '" <> dumpDir <> "/" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"
 
