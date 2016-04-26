@@ -56,7 +56,7 @@ processTable (String tableName) = do
 -- Object (fromList [("accounts",Object (fromList [("shrink",String "select * from accounts where tier = 1 union select * from accounts where id in (select followed_account_id from followers where follower_id = 225239379) union select * from accounts where id in (select follower_id from followers where followed_account_id = 225239379)"),("requires",String "sectors")]))])
 
 processTable (Object (l :: HashMap T.Text Value)) = do
-  lift $ putStr "WARNING: unhandled object list syntax: "
+  lift $ putStr "Processing map definition: "
   -- assert l is an object with one entry
   lift $ print $ l
   let tableName = (head $ keys l)
@@ -74,9 +74,7 @@ processTable (Object (l :: HashMap T.Text Value)) = do
   exportSql $ "COPY " <> tableName <> " TO '" <> dumpDir <> "/" <> tableName <> ".dump';"
   importSql $ "COPY " <> tableName <> " FROM '" <> dumpDir <> "/" <> tableName <> ".dump';"
 
-processTable x = lift $ do
-  putStr "WARNING: unknown table definition synax: "
-  print x
+processTable x = error $ "WARNING: unknown table definition synax: " <> show x
 
 exportSql :: T.Text -> ReaderT Environment IO ()
 exportSql s = do
