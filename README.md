@@ -27,3 +27,6 @@ This tool can help generate subsets of SQL databases.
 Note that the path specified by --directory is on the database server,
 not on the client.
 
+Approximate timings are, on Ben's computer, approximately 4 minutes
+for export and 4 minutes for import.
+
