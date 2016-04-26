@@ -42,6 +42,8 @@ main = do
 
   withEnvironment $ do
 
+    importSql "\\set ON_ERROR_STOP on"
+
     tablesYaml :: Value <- fromMaybe
                              (error "Cannot parse tables file")
                           <$> (lift . decodeFile) tablesFilename
