@@ -27,7 +27,7 @@ This tool can help generate subsets of SQL databases.
 ```
  $ psql postgres -c "DROP DATABASE beautilytics"
  $ psql postgres -c "CREATE DATABASE beautilytics"
- $ pg_restore --schema-only --dbname=beautilytics --no-owner --no-acl
+ $ pg_restore --schema-only --dbname=beautilytics --no-owner --no-acl < /tmp/smalldump/schema.sql
 ```
 
 The path specified by --directory is on the database server
