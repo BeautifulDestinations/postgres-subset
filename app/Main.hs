@@ -81,8 +81,8 @@ withEnvironment a = do
                 <> progDesc "Generate subsets of a database"
                 <> header "postgres-subset - a database subset helper"
                  )
-  exportHandle <- openFile "export.sql" WriteMode
-  importHandle <- openFile "import.sql" WriteMode
+  exportHandle <- openFile (T.unpack (_dataDir cli) <> "/export.sql") WriteMode
+  importHandle <- openFile (T.unpack (_dataDir cli) <> "/import.sql") WriteMode
   let env = Environment exportHandle importHandle cli
   v <- runReaderT a env
   hClose exportHandle
@@ -138,8 +138,8 @@ processTable tspec = do
 
   lift $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
-  exportSql $ "\\copy " <> tableName <> " to '" <> dumpDir <> "/" <> tableName <> ".dump'"
-  importSql $ "COPY " <> tableName <> " FROM '" <> dumpDir <> "/" <> tableName <> ".dump';"
+  exportSql $ "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
+  importSql $ "\\copy " <> tableName <> " from '" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"
 
 exportSql :: T.Text -> ReaderT Environment IO ()
