@@ -5,9 +5,8 @@ tables:
      shrink: "tier = 1 union select * from accounts where id in (select followed_account_id from followers where follower_id = 225239379) union select * from accounts where id in (select follower_id from followers where followed_account_id = 225239379)"
      requires: sectors
  - posts:
-     shrink: "account_id in (select id from accounts) and created_at > now() - interval '6 months'"
+     shrink: "account_id in (select id from accounts) and (created_at > now() - interval '6 months' or account_id = 350327000)"
      requires: accounts
- - airbnb_posts
  - competitors:
      shrink: "main_account_id in (select id from accounts) and competitor_account_id in (select id from accounts)"
      requires: accounts
@@ -71,7 +70,7 @@ tables:
      requires: accounts
  - internal_events_group_exists
  - counts:
-     shrink: "account_id in (select id from accounts) and count_at > now() - interval '6 months'"
+     shrink: "account_id in (select id from accounts) and (count_at > now() - interval '6 months' or account_id = 350327000)"
      requires: accounts
  - bio_changes:
      shrink: "account_id in (select id from accounts)"
@@ -81,7 +80,7 @@ tables:
 # and perhaps to 6 months. Maybe a ticket should be opened about
 # that foreign key constraint
  - like_counts:
-     shrink: "post_id in (select id from posts)"
+     shrink: "post_id in (select id from posts where created_at > now() - interval '1 month' or account_id = 350327000)"
      requires: posts
  - shoutout_predictions:
      shrink: "post_id in (select id from posts) and target_acc_id in (select id from accounts)"
@@ -127,7 +126,6 @@ tables:
      shrink: "account_id in (select id from accounts)"
      requires: accounts
  - scheduled_posts
- - tags_to_fetch
  - user_follow_events
  - user_likes:
      shrink: "post_id in (select id from posts) and liker_account_id in (select id from accounts)"
@@ -136,5 +134,3 @@ tables:
        - posts
  - internal_queries
  - sectors
- - foo
- - bar
