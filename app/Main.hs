@@ -90,10 +90,30 @@ main = do
 
     dbTables <- for dbTableDefs $ \[tableName] -> do
       lift $ progress $ "Table in database: " ++ tableName
+
+      -- courtesy of http://stackoverflow.com/questions/1152260/postgres-sql-to-list-table-foreign-keys
+      fkeys <- lift $ query conn "SELECT \
+    \   kcu.column_name, \
+    \   ccu.table_name AS foreign_table_name, \
+    \   ccu.column_name AS foreign_column_name  \
+    \ FROM \
+    \  information_schema.table_constraints AS tc \
+    \  JOIN information_schema.key_column_usage AS kcu \
+    \  ON tc.constraint_name = kcu.constraint_name \
+    \  JOIN information_schema.constraint_column_usage AS ccu \
+    \  ON ccu.constraint_name = tc.constraint_name \
+    \ WHERE constraint_type = 'FOREIGN KEY' AND tc.table_name=?" 
+         [tableName]
+      lift $ putStr "Foreign key definitions: "
+      lift $ print (fkeys :: [[String]])
+      let fkeyTables = map (T.pack . (!!1) ) fkeys
+      lift $ putStr "Foreign key tables: "
+      lift $ print (fkeyTables)
+
       return $ TableSpec {
           _tableName = T.pack tableName
         , _shrink = Nothing -- populate according to requires (and merge with config-specified stuff)
-        , _requires = [] -- TODO populate from foreign keys
+        , _requires = fkeyTables -- TODO populate from foreign keys
         }
 
 
@@ -232,8 +252,9 @@ orderByRequires ts = o [] ts
     o done (t:ts) = do
 
       -- check that all requirements are in the `done` list already.
-      let isDone t' = t' `elem` done
+      let isDone t' = t' `elem` done || t' == (_tableName t)
       let satisfied = not (False `elem` (nub (map isDone (_requires t))))
+      let missing = filter (not . isDone) (_requires t)
 
       -- if requirements are not all done, punt this element to the
       -- end.
@@ -242,5 +263,5 @@ orderByRequires ts = o [] ts
           lift $ putStrLn $ "Dependencies satisfied for table " <> (show $ _tableName t)
           subs <- o ((_tableName t):done) ts
           return $ t : subs
-        else (lift $ putStrLn $ "Deferring " <> show t <> ", done = " <> show done) >> (o done (ts ++ [t]))
+        else (lift $ putStrLn $ "Deferring " <> show t <> ": missing tables: " <> show missing) >> (o done (ts ++ [t]))
 
