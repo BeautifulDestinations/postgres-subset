@@ -1,5 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecursiveDo #-}
 
 module Main where
 
@@ -13,7 +14,7 @@ import Data.Aeson.Lens (key, _Bool, _String, _Array, values)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Function (on)
 import Data.HashMap.Strict (HashMap(..), elems, keys, lookup)
-import Data.List (nub, groupBy, intersperse, sortBy)
+import Data.List (nub, groupBy, intersperse, sortBy, find)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ( (<>) )
 import qualified Data.Text as T
@@ -84,15 +85,18 @@ main = do
     -- `requires` entries.
 
 
-    conn <- _databaseConnection <$> ask
-    dbTableDefs <- lift $ query_ conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-    lift $ print (dbTableDefs :: [[String]])
+    -- this 'rec' block allows access to the final tableDefs
+    -- value in the code that is constructing it.
+    rec  
+      conn <- _databaseConnection <$> ask
+      dbTableDefs <- lift $ query_ conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+      lift $ print (dbTableDefs :: [[String]])
 
-    dbTables <- for dbTableDefs $ \[tableName] -> do
-      lift $ progress $ "Table in database: " ++ tableName
+      dbTables <- for dbTableDefs $ \[tableName] -> do
+        lift $ progress $ "Table in database: " ++ tableName
 
       -- courtesy of http://stackoverflow.com/questions/1152260/postgres-sql-to-list-table-foreign-keys
-      fkeys <- lift $ query conn "SELECT \
+        fkeys <- lift $ query conn "SELECT \
     \   kcu.column_name, \
     \   ccu.table_name AS foreign_table_name, \
     \   ccu.column_name AS foreign_column_name  \
@@ -103,31 +107,61 @@ main = do
     \  JOIN information_schema.constraint_column_usage AS ccu \
     \  ON ccu.constraint_name = tc.constraint_name \
     \ WHERE constraint_type = 'FOREIGN KEY' AND tc.table_name=?" 
-         [tableName]
-      lift $ putStr "Foreign key definitions: "
-      lift $ print (fkeys :: [[String]])
-      let fkeyTables = map (T.pack . (!!1) ) fkeys
-      lift $ putStr "Foreign key tables: "
-      lift $ print (fkeyTables)
+           [tableName]
+        lift $ putStr "Foreign key definitions: "
+        lift $ print (fkeys :: [[String]])
+        let fkeyTables = map (T.pack . (!!1) ) fkeys
+        lift $ putStr "Foreign key tables: "
+        lift $ print (fkeyTables)
 
-      return $ TableSpec {
-          _tableName = T.pack tableName
-        , _shrink = Nothing -- populate according to requires (and merge with config-specified stuff)
-        , _requires = fkeyTables
-        }
+      -- if any of our 'requires' tables have been
+      -- shrunk, we need to shrink this table
+      -- accordingly, so that the foreign keys
+      -- are not violated.
 
+      -- but at the moment, we don't know if the
+      -- table has been shrunk or not! because we
+      -- can also shrink in the config file.
 
-    tablesFilename <- getTablesFilename
-    tablesYaml :: Value <- fromMaybe
-                             (error "Cannot parse tables file")
-                          <$> (lift . decodeFile) tablesFilename
+      -- and this needs to happen recursively.
+      -- which is a bit awkward because we're living in
+      -- ReaderT IO here (although only for the
+      -- purposes of output tracing...)
 
-    -- get table specifications from file
-    let configTableDefs = tablesYaml ^.. key "tables" . values
-    configTableDefs' <- for configTableDefs parseTable
+        requiresTables <- for fkeys $ \fk -> do
+          let foreignTableName = T.pack $ fk !! 1
+          if (fk !! 1) == tableName
+            then return Nothing
+            else do
+              -- this must exist, because all tables are in tableDefs
+              let (Just tableSpec) =  find (\table -> _tableName table == foreignTableName) tableDefs
+              return $ case _shrink tableSpec of
+                Nothing -> Nothing
+                Just _ -> Just $ T.pack $ (fk !! 0) ++ " IN (SELECT " ++ (fk !! 2) ++ " FROM " ++ (fk !! 1) ++ ")"
+                -- ^ we don't care how the foreign table was shrunk,
+                --   just whether it was shrunk or not.
 
-    let tableDefs = mergeTableDefs dbTables configTableDefs'
+        let fkeyShrink = foldr sqlcat Nothing requiresTables
 
+        return $ TableSpec {
+            _tableName = T.pack tableName
+          , _shrink = fkeyShrink
+          , _requires = fkeyTables
+          }
+
+      tablesFilename <- getTablesFilename
+      tablesYaml :: Value <- fromMaybe
+                               (error "Cannot parse tables file")
+                            <$> (lift . decodeFile) tablesFilename
+
+      -- get table specifications from file
+      let configTableDefs = tablesYaml ^.. key "tables" . values
+      configTableDefs' <- for configTableDefs parseTable
+
+      let tableDefs = mergeTableDefs dbTables configTableDefs'
+
+    lift $ putStrLn "TABLE DEFS:"
+    lift $ print tableDefs
 
     tableDefs'' <- orderByRequires tableDefs
 
@@ -147,10 +181,11 @@ mergeTableDefs t1 t2 = map mergeTable groups
           , _shrink = (_shrink l) `sqlcat` (_shrink r)
           , _requires = nub $ (_requires l) ++ (_requires r)
           }
-        sqlcat :: Maybe T.Text -> Maybe T.Text -> Maybe T.Text
-        sqlcat Nothing r = r
-        sqlcat l Nothing = l
-        sqlcat (Just l) (Just r) = Just $ "(" <> l <> ") AND (" <> r <> ")"
+
+sqlcat :: Maybe T.Text -> Maybe T.Text -> Maybe T.Text
+sqlcat Nothing r = r
+sqlcat l Nothing = l
+sqlcat (Just l) (Just r) = Just $ "(" <> l <> ") AND (" <> r <> ")"
 
 withEnvironment :: ReaderT Environment IO a -> IO a
 withEnvironment a = do
