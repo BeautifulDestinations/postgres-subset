@@ -235,6 +235,7 @@ parseTable (Object (l :: HashMap T.Text Value)) = do
   let requires = case requiresValue of 
         Just (String singleRequirement) -> [singleRequirement]
         Just (Array strings) -> map (\(String s) -> s) (V.toList strings)
+        Nothing -> []
         x -> error $ "Unknown requires: case: " <> show x
 
   return $ TableSpec
