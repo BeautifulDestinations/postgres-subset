@@ -10,14 +10,17 @@ import Control.Monad.Reader (runReaderT, ask, ReaderT)
 import Control.Monad.Trans (lift)
 import Data.Aeson ( Value(..) )
 import Data.Aeson.Lens (key, _Bool, _String, _Array, values)
+import qualified Data.ByteString.Char8 as BS8
+import Data.Function (on)
 import Data.HashMap.Strict (HashMap(..), elems, keys, lookup)
-import Data.List (nub)
+import Data.List (nub, groupBy, intersperse, sortBy)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ( (<>) )
 import qualified Data.Text as T
 import Data.Traversable (for)
 import qualified Data.Vector as V
 import Data.Yaml
+import Database.PostgreSQL.Simple as PSQL
 import Options.Applicative (strOption, long, metavar, help,
                             execParser, info, helper, fullDesc, progDesc, header)
 import qualified Options.Applicative as Optparse
@@ -28,6 +31,7 @@ data CommandLine = CommandLine
   {
     _dataDir :: T.Text
   , _tablesFilename :: String
+  , _connStr :: String
   }
 
 commandLineOptions :: Optparse.Parser CommandLine
@@ -40,11 +44,16 @@ commandLineOptions = CommandLine
                 <> metavar "YAML-FILE"
                 <> help "Table definitions file"
                 )
+  <*> strOption ( long "db"
+                <> metavar "CONNECT-STRING"
+                <> help "postgres connection string"
+                )
 
 data Environment = Environment
   { _exportHandle :: Handle
   , _importHandle :: Handle
   , _commandline :: CommandLine
+  , _databaseConnection :: PSQL.Connection
   }
 
 getTablesFilename = (_tablesFilename . _commandline) <$> ask
@@ -63,16 +72,65 @@ main = do
   withEnvironment $ do
 
     importSql "\\set ON_ERROR_STOP on"
+
+    -- get table specificatiosn from database
+    -- this will include, perhaps, some tables that are not
+    -- mentioned in the table file, and should be
+    -- the definitive list of tables, rather than the
+    -- list in the table defs file (which should instead
+    -- be annotations on this)
+    -- In addition to a list of table names, foreign
+    -- key constraints should be read to generate
+    -- `requires` entries.
+
+
+    conn <- _databaseConnection <$> ask
+    dbTableDefs <- lift $ query_ conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+    lift $ print (dbTableDefs :: [[String]])
+
+    dbTables <- for dbTableDefs $ \[tableName] -> do
+      lift $ progress $ "Table in database: " ++ tableName
+      return $ TableSpec {
+          _tableName = T.pack tableName
+        , _shrink = Nothing -- populate according to requires (and merge with config-specified stuff)
+        , _requires = [] -- TODO populate from foreign keys
+        }
+
+
     tablesFilename <- getTablesFilename
     tablesYaml :: Value <- fromMaybe
                              (error "Cannot parse tables file")
                           <$> (lift . decodeFile) tablesFilename
-    let tableDefs = tablesYaml ^.. key "tables" . values
-    tableDefs' <- for tableDefs parseTable
-    tableDefs'' <- orderByRequires tableDefs'
+
+    -- get table specifications from file
+    let configTableDefs = tablesYaml ^.. key "tables" . values
+    configTableDefs' <- for configTableDefs parseTable
+
+    let tableDefs = mergeTableDefs dbTables configTableDefs'
+
+
+    tableDefs'' <- orderByRequires tableDefs
+
     for tableDefs'' processTable
 
   progress "done."
+
+mergeTableDefs :: [TableSpec] -> [TableSpec] -> [TableSpec]
+mergeTableDefs t1 t2 = map mergeTable groups
+  where groups = groupBy eqName (sortName $ t1 ++ t2)
+        eqName = (==) `on` _tableName
+        compareName = compare `on` _tableName
+        sortName t = sortBy compareName t
+        mergeTable [l] = l -- express this as a fold, more generally?
+        mergeTable [l,r] = TableSpec {
+            _tableName = _tableName l -- assert == _tableName r
+          , _shrink = (_shrink l) `sqlcat` (_shrink r)
+          , _requires = nub $ (_requires l) ++ (_requires r)
+          }
+        sqlcat :: Maybe T.Text -> Maybe T.Text -> Maybe T.Text
+        sqlcat Nothing r = r
+        sqlcat l Nothing = l
+        sqlcat (Just l) (Just r) = Just $ "(" <> l <> ") AND (" <> r <> ")"
 
 withEnvironment :: ReaderT Environment IO a -> IO a
 withEnvironment a = do
@@ -83,8 +141,13 @@ withEnvironment a = do
                  )
   exportHandle <- openFile (T.unpack (_dataDir cli) <> "/export.sql") WriteMode
   importHandle <- openFile (T.unpack (_dataDir cli) <> "/import.sql") WriteMode
-  let env = Environment exportHandle importHandle cli
+
+  conn <- PSQL.connectPostgreSQL (BS8.pack $ _connStr cli)
+
+  let env = Environment exportHandle importHandle cli conn
   v <- runReaderT a env
+
+  close conn -- beware of laziness in processing table results here - should do at end?
   hClose exportHandle
   hClose importHandle
   return v
@@ -128,8 +191,12 @@ parseTable (Object (l :: HashMap T.Text Value)) = do
 parseTable x = error $ "WARNING: unknown table definition synax: " <> show x
 
 processTable tspec = do
+
   let tableName = _tableName tspec
   lift $ progress $ "Processing table definition: " <> (show $ _tableName tspec)
+  exportSql $ "-- Table: " <> tableName
+  exportSql $ "-- Requires: " <> (foldr (<>) (T.pack "") $ intersperse (T.pack ", ") $ _requires tspec)
+
   case (_shrink tspec) of
     Nothing -> lift $ putStrLn "Not shrinking this table"
     (Just shrinkSql) -> do
