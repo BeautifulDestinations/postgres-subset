@@ -12,7 +12,7 @@ This tool can help generate subsets of SQL databases.
 3. Generate import and export SQL scripts:
 
 ```
-  $ stack exec -- postgres-subset --tables ./tables.yaml --directory=/tmp/smalldump/
+  $ stack exec -- postgres-subset --tables ./tables.yaml --directory=/tmp/smalldump/ --db="host='db' user='benc' dbname='beautilytics'" 
 ```
 
 3. On the exporting database:
