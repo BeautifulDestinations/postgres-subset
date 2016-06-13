@@ -113,7 +113,7 @@ main = do
       return $ TableSpec {
           _tableName = T.pack tableName
         , _shrink = Nothing -- populate according to requires (and merge with config-specified stuff)
-        , _requires = fkeyTables -- TODO populate from foreign keys
+        , _requires = fkeyTables
         }
 
 
