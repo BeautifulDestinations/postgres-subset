@@ -137,7 +137,12 @@ main = do
               let (Just tableSpec) =  find (\table -> _tableName table == foreignTableName) tableDefs
               return $ case _shrink tableSpec of
                 Nothing -> Nothing
-                Just _ -> Just $ T.pack $ (fk !! 0) ++ " IN (SELECT " ++ (fk !! 2) ++ " FROM " ++ (fk !! 1) ++ ")"
+                Just _ -> Just $ T.pack $
+                     "("
+                  ++     "(" ++ (fk !! 0) ++ " IN (SELECT " ++ (fk !! 2) ++ " FROM " ++ (fk !! 1) ++ ") )" 
+                  ++ " OR ( " ++ fk !! 0 ++ " IS NULL)"  -- TODO: do this only when the fk is nullable, because
+                                                         -- it makes the query substantially more expensive
+                  ++ ")"
                 -- ^ we don't care how the foreign table was shrunk,
                 --   just whether it was shrunk or not.
 
