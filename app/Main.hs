@@ -146,7 +146,7 @@ main = do
                 -- ^ we don't care how the foreign table was shrunk,
                 --   just whether it was shrunk or not.
 
-        let fkeyShrink = foldr sqlcat Nothing requiresTables
+        let fkeyShrink = foldr sqlAnd Nothing requiresTables
 
         return $ TableSpec {
             _tableName = T.pack tableName
@@ -183,14 +183,14 @@ mergeTableDefs t1 t2 = map mergeTable groups
         mergeTable [l] = l -- express this as a fold, more generally?
         mergeTable [l,r] = TableSpec {
             _tableName = _tableName l -- assert == _tableName r
-          , _shrink = (_shrink l) `sqlcat` (_shrink r)
+          , _shrink = (_shrink l) `sqlAnd` (_shrink r)
           , _requires = nub $ (_requires l) ++ (_requires r)
           }
 
-sqlcat :: Maybe T.Text -> Maybe T.Text -> Maybe T.Text
-sqlcat Nothing r = r
-sqlcat l Nothing = l
-sqlcat (Just l) (Just r) = Just $ "(" <> l <> ") AND (" <> r <> ")"
+sqlAnd :: Maybe T.Text -> Maybe T.Text -> Maybe T.Text
+sqlAnd Nothing r = r
+sqlAnd l Nothing = l
+sqlAnd (Just l) (Just r) = Just $ "(" <> l <> ") AND (" <> r <> ")"
 
 withEnvironment :: ReaderT Environment IO a -> IO a
 withEnvironment a = do
