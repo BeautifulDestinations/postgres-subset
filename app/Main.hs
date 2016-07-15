@@ -11,17 +11,21 @@ import Control.Monad.Reader (runReaderT, ask, ReaderT)
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import Data.Aeson ( Value(..) )
 import Data.Aeson.Lens (key, _Bool, _String, _Array, values)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Function (on)
 import Data.HashMap.Strict (HashMap(..), elems, keys, lookup)
+import Data.Int (Int64)
 import Data.List (nub, groupBy, intersperse, sortBy, find)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ( (<>) )
+import Data.String (fromString)
 import qualified Data.Text as T
 import Data.Traversable (for)
 import qualified Data.Vector as V
 import Data.Yaml
 import Database.PostgreSQL.Simple as PSQL
+import Database.PostgreSQL.Simple.Copy as PSQLC
 import Options.Applicative (strOption, long, metavar, help,
                             execParser, info, helper, fullDesc, progDesc, header)
 import qualified Options.Applicative as Optparse
@@ -51,8 +55,7 @@ commandLineOptions = CommandLine
                 )
 
 data Environment = Environment
-  { _exportHandle :: Handle
-  , _importHandle :: Handle
+  { _importHandle :: Handle
   , _commandline :: CommandLine
   , _databaseConnection :: PSQL.Connection
   }
@@ -199,21 +202,18 @@ withEnvironment a = do
                 <> progDesc "Generate subsets of a database"
                 <> header "postgres-subset - a database subset helper"
                  )
-  exportHandle <- openFile (T.unpack (_dataDir cli) <> "/export.sql") WriteMode
   importHandle <- openFile (T.unpack (_dataDir cli) <> "/import.sql") WriteMode
 
   conn <- PSQL.connectPostgreSQL (BS8.pack $ _connStr cli)
 
   let env = Environment
-       { _exportHandle = exportHandle 
-       , _importHandle = importHandle
+       { _importHandle = importHandle
        , _commandline = cli
        , _databaseConnection = conn
        }
   v <- runReaderT a env
 
   close conn -- beware of laziness in processing table results here - should do at end?
-  hClose exportHandle
   hClose importHandle
   return v
 
@@ -268,7 +268,11 @@ processTable tspec = do
     (Just shrinkSql) -> do
       exportNote $ "Shrinking: " <> tableName
       liftIO $ putStrLn $ "Shrink SQL: " <> show shrinkSql
-      exportShrink $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql <> ";"
+      exportShrink $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql
+      -- TODO: later, we should use the number returned by exportShrink
+      -- to determine if we need to shrink some more.
+      -- see https://github.com/BeautifulDestinations/postgres-subset/issues/2
+      return ()
 
   liftIO $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
@@ -280,19 +284,30 @@ processTable tspec = do
 
 exportTable :: T.Text -> ReaderT Environment IO ()
 exportTable tableName = do
-   let sql = "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
-   exportSql sql
+   -- let sql = "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
+   let sql = "COPY " <> (fromString $ T.unpack tableName) <> " TO STDOUT"
+   conn <- _databaseConnection <$> ask
+   cli <- _commandline <$> ask
+   liftIO $ PSQLC.copy_ conn sql
+   h <- liftIO $ openFile ((T.unpack (_dataDir cli <> "/" <> tableName)) <> ".dump") WriteMode
+   drainCopy h
+   liftIO $ hClose h
+
+drainCopy :: Handle -> ReaderT Environment IO ()
+drainCopy h = do
+  conn <- _databaseConnection <$> ask
+  cd <- liftIO $ PSQLC.getCopyData conn
+  case cd of
+    PSQLC.CopyOutRow bs -> (liftIO $ BS.hPut h bs) >> drainCopy h
+    PSQLC.CopyOutDone n -> progress ("CopyOutDone with " <> (show n) <> " rows")
 
 exportNote :: T.Text -> ReaderT Environment IO ()
-exportNote s = exportSql ("\\echo " <> s)
+exportNote note = progress (T.unpack note)
 
-exportShrink :: T.Text -> ReaderT Environment IO ()
-exportShrink s = exportSql s
-
-exportSql :: T.Text -> ReaderT Environment IO ()
-exportSql s = do
-   h <- _exportHandle <$> ask
-   liftIO $ hPutStrLn h (T.unpack s)
+exportShrink :: T.Text -> ReaderT Environment IO Int64
+exportShrink s = do
+  conn <- _databaseConnection <$> ask
+  liftIO $ execute_ conn (fromString $ T.unpack s)
 
 importSql :: T.Text -> ReaderT Environment IO ()
 importSql s = do
