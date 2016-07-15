@@ -204,7 +204,12 @@ withEnvironment a = do
 
   conn <- PSQL.connectPostgreSQL (BS8.pack $ _connStr cli)
 
-  let env = Environment exportHandle importHandle cli conn
+  let env = Environment
+       { _exportHandle = exportHandle 
+       , _importHandle = importHandle
+       , _commandline = cli
+       , _databaseConnection = conn
+       }
   v <- runReaderT a env
 
   close conn -- beware of laziness in processing table results here - should do at end?
