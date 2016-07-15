@@ -33,6 +33,7 @@ executable postgres-subset
                      , optparse-applicative
                      , postgresql-simple
                      , text
+                     , transformers
                      , unordered-containers
                      , vector
                      , yaml

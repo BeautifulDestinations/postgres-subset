@@ -8,6 +8,7 @@ import Prelude hiding (lookup)
 
 import Control.Lens ( (^..) )
 import Control.Monad.Reader (runReaderT, ask, ReaderT)
+import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Monad.Trans (lift)
 import Data.Aeson ( Value(..) )
 import Data.Aeson.Lens (key, _Bool, _String, _Array, values)
@@ -93,7 +94,7 @@ main = do
       lift $ print (dbTableDefs :: [[String]])
 
       dbTables <- for dbTableDefs $ \[tableName] -> do
-        lift $ progress $ "Table in database: " ++ tableName
+        progress $ "Table in database: " ++ tableName
 
       -- courtesy of http://stackoverflow.com/questions/1152260/postgres-sql-to-list-table-foreign-keys
         fkeys <- lift $ query conn "SELECT \
@@ -212,8 +213,8 @@ withEnvironment a = do
   hClose importHandle
   return v
 
-progress :: String -> IO ()
-progress = putStrLn
+progress :: MonadIO m => String -> m ()
+progress = liftIO . putStrLn
 
 parseTable :: Value -> ReaderT Environment IO TableSpec
 parseTable (String tableName) = return $ TableSpec
@@ -254,7 +255,7 @@ parseTable x = error $ "WARNING: unknown table definition synax: " <> show x
 processTable tspec = do
 
   let tableName = _tableName tspec
-  lift $ progress $ "Processing table definition: " <> (show $ _tableName tspec)
+  progress $ "Processing table definition: " <> (show $ _tableName tspec)
   exportSql $ "-- Table: " <> tableName
   exportSql $ "-- Requires: " <> (foldr (<>) (T.pack "") $ intersperse (T.pack ", ") $ _requires tspec)
 
