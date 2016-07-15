@@ -269,22 +269,23 @@ processTable tspec = do
   dumpDir <- getDataDir
   exportNote $ "Exporting: " <> tableName
   importSql $ "\\echo Importing: " <> tableName
-  exportTable $ "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
+  exportTable tableName
   importSql $ "\\copy " <> tableName <> " from '" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"
 
 exportTable :: T.Text -> ReaderT Environment IO ()
-exportTable s = do
-   h <- _exportHandle <$> ask
-   liftIO $ hPutStrLn h (T.unpack s)
+exportTable tableName = do
+   let sql = "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
+   exportSql sql
 
 exportNote :: T.Text -> ReaderT Environment IO ()
-exportNote s = do
-   h <- _exportHandle <$> ask
-   liftIO $ hPutStrLn h (T.unpack $ "\\echo " <> s)
+exportNote s = exportSql ("\\echo " <> s)
 
 exportShrink :: T.Text -> ReaderT Environment IO ()
-exportShrink s = do
+exportShrink s = exportSql s
+
+exportSql :: T.Text -> ReaderT Environment IO ()
+exportSql s = do
    h <- _exportHandle <$> ask
    liftIO $ hPutStrLn h (T.unpack s)
 
