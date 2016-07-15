@@ -255,19 +255,19 @@ processTable tspec = do
 
   let tableName = _tableName tspec
   progress $ "Processing table definition: " <> (show $ _tableName tspec)
-  exportNote $ "-- Table: " <> tableName
-  exportNote $ "-- Requires: " <> (foldr (<>) (T.pack "") $ intersperse (T.pack ", ") $ _requires tspec)
+  exportNote $ "Table: " <> tableName
+  exportNote $ "Requires: " <> (foldr (<>) (T.pack "") $ intersperse (T.pack ", ") $ _requires tspec)
 
   case (_shrink tspec) of
     Nothing -> liftIO $ putStrLn "Not shrinking this table"
     (Just shrinkSql) -> do
-      exportNote $ "\\echo Shrinking: " <> tableName
+      exportNote $ "Shrinking: " <> tableName
       liftIO $ putStrLn $ "Shrink SQL: " <> show shrinkSql
       exportShrink $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql <> ";"
 
   liftIO $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
-  exportNote $ "\\echo Exporting: " <> tableName
+  exportNote $ "Exporting: " <> tableName
   importSql $ "\\echo Importing: " <> tableName
   exportTable $ "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
   importSql $ "\\copy " <> tableName <> " from '" <> tableName <> ".dump';"
@@ -281,7 +281,7 @@ exportTable s = do
 exportNote :: T.Text -> ReaderT Environment IO ()
 exportNote s = do
    h <- _exportHandle <$> ask
-   liftIO $ hPutStrLn h (T.unpack s)
+   liftIO $ hPutStrLn h (T.unpack $ "\\echo " <> s)
 
 exportShrink :: T.Text -> ReaderT Environment IO ()
 exportShrink s = do
