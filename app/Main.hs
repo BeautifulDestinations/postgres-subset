@@ -9,7 +9,6 @@ import Prelude hiding (lookup)
 import Control.Lens ( (^..) )
 import Control.Monad.Reader (runReaderT, ask, ReaderT)
 import Control.Monad.IO.Class (liftIO, MonadIO)
-import Control.Monad.Trans (lift)
 import Data.Aeson ( Value(..) )
 import Data.Aeson.Lens (key, _Bool, _String, _Array, values)
 import qualified Data.ByteString.Char8 as BS8
@@ -90,14 +89,14 @@ main = do
     -- value in the code that is constructing it.
     rec  
       conn <- _databaseConnection <$> ask
-      dbTableDefs <- lift $ query_ conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-      lift $ print (dbTableDefs :: [[String]])
+      dbTableDefs <- liftIO $ query_ conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+      liftIO $ print (dbTableDefs :: [[String]])
 
       dbTables <- for dbTableDefs $ \[tableName] -> do
         progress $ "Table in database: " ++ tableName
 
       -- courtesy of http://stackoverflow.com/questions/1152260/postgres-sql-to-list-table-foreign-keys
-        fkeys <- lift $ query conn "SELECT \
+        fkeys <- liftIO $ query conn "SELECT \
     \   kcu.column_name, \
     \   ccu.table_name AS foreign_table_name, \
     \   ccu.column_name AS foreign_column_name  \
@@ -109,11 +108,11 @@ main = do
     \  ON ccu.constraint_name = tc.constraint_name \
     \ WHERE constraint_type = 'FOREIGN KEY' AND tc.table_name=?" 
            [tableName]
-        lift $ putStr "Foreign key definitions: "
-        lift $ print (fkeys :: [[String]])
+        liftIO $ putStr "Foreign key definitions: "
+        liftIO $ print (fkeys :: [[String]])
         let fkeyTables = map (T.pack . (!!1) ) fkeys
-        lift $ putStr "Foreign key tables: "
-        lift $ print (fkeyTables)
+        liftIO $ putStr "Foreign key tables: "
+        liftIO $ print (fkeyTables)
 
       -- if any of our 'requires' tables have been
       -- shrunk, we need to shrink this table
@@ -158,7 +157,7 @@ main = do
       tablesFilename <- getTablesFilename
       tablesYaml :: Value <- fromMaybe
                                (error "Cannot parse tables file")
-                            <$> (lift . decodeFile) tablesFilename
+                            <$> (liftIO . decodeFile) tablesFilename
 
       -- get table specifications from file
       let configTableDefs = tablesYaml ^.. key "tables" . values
@@ -166,8 +165,8 @@ main = do
 
       let tableDefs = mergeTableDefs dbTables configTableDefs'
 
-    lift $ putStrLn "TABLE DEFS:"
-    lift $ print tableDefs
+    liftIO $ putStrLn "TABLE DEFS:"
+    liftIO $ print tableDefs
 
     tableDefs'' <- orderByRequires tableDefs
 
@@ -228,16 +227,16 @@ parseTable (Object (l :: HashMap T.Text Value)) = do
   let (Object def) = (head $ elems l)
 
   shrinkSql <- case lookup "shrink" def of
-    Nothing -> do lift $ putStrLn "Not shrinking this table"
+    Nothing -> do liftIO $ putStrLn "Not shrinking this table"
                   return Nothing
     (Just (String s)) -> do
-      lift $ putStrLn $ "Shrink SQL: " <> show s
+      liftIO $ putStrLn $ "Shrink SQL: " <> show s
       return $ Just s
 
     Just x -> error $ "Unknown shrink syntax: " <> show x
 
   let requiresValue = lookup "requires" def
-  lift $ putStrLn $ "Requires: " <> show requiresValue
+  liftIO $ putStrLn $ "Requires: " <> show requiresValue
   let requires = case requiresValue of 
         Just (String singleRequirement) -> [singleRequirement]
         Just (Array strings) -> map (\(String s) -> s) (V.toList strings)
@@ -260,13 +259,13 @@ processTable tspec = do
   exportSql $ "-- Requires: " <> (foldr (<>) (T.pack "") $ intersperse (T.pack ", ") $ _requires tspec)
 
   case (_shrink tspec) of
-    Nothing -> lift $ putStrLn "Not shrinking this table"
+    Nothing -> liftIO $ putStrLn "Not shrinking this table"
     (Just shrinkSql) -> do
       exportSql $ "\\echo Shrinking: " <> tableName
-      lift $ putStrLn $ "Shrink SQL: " <> show shrinkSql
+      liftIO $ putStrLn $ "Shrink SQL: " <> show shrinkSql
       exportSql $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql <> ";"
 
-  lift $ putStrLn $ "Requires: " <> show (_requires tspec)
+  liftIO $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
   exportSql $ "\\echo Exporting: " <> tableName
   importSql $ "\\echo Importing: " <> tableName
@@ -277,12 +276,12 @@ processTable tspec = do
 exportSql :: T.Text -> ReaderT Environment IO ()
 exportSql s = do
    h <- _exportHandle <$> ask
-   lift $ hPutStrLn h (T.unpack s)
+   liftIO $ hPutStrLn h (T.unpack s)
 
 importSql :: T.Text -> ReaderT Environment IO ()
 importSql s = do
    h <- _importHandle <$> ask
-   lift $ hPutStrLn h (T.unpack s)
+   liftIO $ hPutStrLn h (T.unpack s)
 
 
 -- | Sorts the supplied tables by the requirements field.
@@ -305,8 +304,8 @@ orderByRequires ts = o [] ts
       -- end.
       if satisfied
         then do
-          lift $ putStrLn $ "Dependencies satisfied for table " <> (show $ _tableName t)
+          liftIO $ putStrLn $ "Dependencies satisfied for table " <> (show $ _tableName t)
           subs <- o ((_tableName t):done) ts
           return $ t : subs
-        else (lift $ putStrLn $ "Deferring " <> show t <> ": missing tables: " <> show missing) >> (o done (ts ++ [t]))
+        else (liftIO $ putStrLn $ "Deferring " <> show t <> ": missing tables: " <> show missing) >> (o done (ts ++ [t]))
 
