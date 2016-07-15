@@ -261,11 +261,14 @@ processTable tspec = do
   case (_shrink tspec) of
     Nothing -> lift $ putStrLn "Not shrinking this table"
     (Just shrinkSql) -> do
+      exportSql $ "\\echo Shrinking: " <> tableName
       lift $ putStrLn $ "Shrink SQL: " <> show shrinkSql
       exportSql $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql <> ";"
 
   lift $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
+  exportSql $ "\\echo Exporting: " <> tableName
+  importSql $ "\\echo Importing: " <> tableName
   exportSql $ "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
   importSql $ "\\copy " <> tableName <> " from '" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"
