@@ -263,8 +263,10 @@ processTable tspec = do
   exportNote $ "Table: " <> tableName
   exportNote $ "Requires: " <> (foldr (<>) (T.pack "") $ intersperse (T.pack ", ") $ _requires tspec)
 
-  case (_shrink tspec) of
-    Nothing -> liftIO $ putStrLn "Not shrinking this table"
+  t' <- case (_shrink tspec) of
+    Nothing -> do
+      liftIO $ putStrLn "Not shrinking this table"
+      return tableName
     (Just shrinkSql) -> do
       exportNote $ "Shrinking: " <> tableName
       liftIO $ putStrLn $ "Shrink SQL: " <> show shrinkSql
@@ -272,20 +274,19 @@ processTable tspec = do
       -- TODO: later, we should use the number returned by exportShrink
       -- to determine if we need to shrink some more.
       -- see https://github.com/BeautifulDestinations/postgres-subset/issues/2
-      return ()
+      return tableName
 
   liftIO $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
   exportNote $ "Exporting: " <> tableName
   importSql $ "\\echo Importing: " <> tableName
-  exportTable tableName
+  exportTable tableName t'
   importSql $ "\\copy " <> tableName <> " from '" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"
 
-exportTable :: T.Text -> ReaderT Environment IO ()
-exportTable tableName = do
-   -- let sql = "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
-   let sql = "COPY " <> (fromString $ T.unpack tableName) <> " TO STDOUT"
+exportTable :: T.Text -> T.Text -> ReaderT Environment IO ()
+exportTable tableName srcTableName = do
+   let sql = "COPY " <> (fromString $ T.unpack srcTableName) <> " TO STDOUT"
    conn <- _databaseConnection <$> ask
    cli <- _commandline <$> ask
    liftIO $ PSQLC.copy_ conn sql
