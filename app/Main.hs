@@ -255,26 +255,36 @@ processTable tspec = do
 
   let tableName = _tableName tspec
   progress $ "Processing table definition: " <> (show $ _tableName tspec)
-  exportSql $ "-- Table: " <> tableName
-  exportSql $ "-- Requires: " <> (foldr (<>) (T.pack "") $ intersperse (T.pack ", ") $ _requires tspec)
+  exportNote $ "-- Table: " <> tableName
+  exportNote $ "-- Requires: " <> (foldr (<>) (T.pack "") $ intersperse (T.pack ", ") $ _requires tspec)
 
   case (_shrink tspec) of
     Nothing -> liftIO $ putStrLn "Not shrinking this table"
     (Just shrinkSql) -> do
-      exportSql $ "\\echo Shrinking: " <> tableName
+      exportNote $ "\\echo Shrinking: " <> tableName
       liftIO $ putStrLn $ "Shrink SQL: " <> show shrinkSql
-      exportSql $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql <> ";"
+      exportShrink $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql <> ";"
 
   liftIO $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
-  exportSql $ "\\echo Exporting: " <> tableName
+  exportNote $ "\\echo Exporting: " <> tableName
   importSql $ "\\echo Importing: " <> tableName
-  exportSql $ "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
+  exportTable $ "\\copy " <> tableName <> " to '" <> tableName <> ".dump'"
   importSql $ "\\copy " <> tableName <> " from '" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"
 
-exportSql :: T.Text -> ReaderT Environment IO ()
-exportSql s = do
+exportTable :: T.Text -> ReaderT Environment IO ()
+exportTable s = do
+   h <- _exportHandle <$> ask
+   liftIO $ hPutStrLn h (T.unpack s)
+
+exportNote :: T.Text -> ReaderT Environment IO ()
+exportNote s = do
+   h <- _exportHandle <$> ask
+   liftIO $ hPutStrLn h (T.unpack s)
+
+exportShrink :: T.Text -> ReaderT Environment IO ()
+exportShrink s = do
    h <- _exportHandle <$> ask
    liftIO $ hPutStrLn h (T.unpack s)
 
