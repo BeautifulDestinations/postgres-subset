@@ -18,7 +18,7 @@ import Data.Function (on)
 import Data.HashMap.Strict (HashMap(..), elems, keys, lookup)
 import Data.Int (Int64)
 import Data.List (nub, groupBy, intersperse, sortBy, find)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Monoid ( (<>) )
 import Data.String (fromString)
 import qualified Data.Text as T
@@ -134,21 +134,27 @@ main = do
 
         requiresTables <- for fkeys $ \fk -> do
           let foreignTableName = T.pack $ fk !! 1
-          if (fk !! 1) == tableName
-            then return Nothing
-            else do
-              -- this must exist, because all tables are in tableDefs
-              let (Just tableSpec) =  find (\table -> _tableName table == foreignTableName) tableDefs
-              return $ case _shrink tableSpec of
-                Nothing -> Nothing
-                Just _ -> Just $ T.pack $
+          -- we should shrink when an upstream table is
+          -- shrunk, or if we are referencing ourselves
+          -- although in that second case we really only
+          -- need to shrink if there is also an
+          -- upstream shrink(?)   [PERFORMANCE]
+          -- when working on this code, be careful about
+          -- laziness: the tableSpec and its constituent
+          -- fields all become available at different times
+          -- during the run, and <<loops>> can easily
+          -- occur.
+          let (Just tableSpec) = find (\table -> _tableName table == foreignTableName) tableDefs
+          let shouldShrink = (fk !! 1) == tableName || isJust (_shrink tableSpec)
+          return $ if shouldShrink 
+            then Just $ T.pack $
                      "("
                   ++     "(" ++ (fk !! 0) ++ " IN (SELECT " ++ (fk !! 2) ++ " FROM " ++ (fk !! 1) ++ ") )" 
                   ++ " OR ( " ++ fk !! 0 ++ " IS NULL)"  -- TODO: do this only when the fk is nullable, because
                                                          -- it makes the query substantially more expensive
+                                                         -- [PERFORMANCE]
                   ++ ")"
-                -- ^ we don't care how the foreign table was shrunk,
-                --   just whether it was shrunk or not.
+            else Nothing
 
         let fkeyShrink = foldr sqlAnd Nothing requiresTables
 
@@ -279,14 +285,48 @@ processTable tspec = do
       return tableName
     (Just shrinkSql) -> do
       exportNote $ "Shrinking: " <> tableName
+
+      -- really, this looping shrink behaviour only needs to happen
+      -- in the case of loops in the key graph. aside from the cost,
+      -- it is harmless to always do it.
+
+      conn <- _databaseConnection <$> ask
+      ([[nb]] :: [[Int64]]) <- liftIO $ query_ conn (fromString $ T.unpack $ "SELECT COUNT(*) FROM " <> tableName)
+      progress $ "Before shrink, there are " <> show nb <> " rows"
+
       liftIO $ putStrLn $ "Shrink SQL: " <> show shrinkSql
-      tempTableName <- (("postgressubsettemp" <>) . T.pack . show) <$> getUnique
-      exportShrink $ "CREATE TEMPORARY TABLE " <> tempTableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql
-      exportShrink $ "ALTER TABLE pg_temp."<> tempTableName <> " RENAME TO " <> tableName
-      -- TODO: later, we should use the number returned by exportShrink
-      -- to determine if we need to shrink some more.
-      -- see https://github.com/BeautifulDestinations/postgres-subset/issues/2
-      return tableName
+
+      -- recursion body will replace the current version of tableName
+      -- with a shrunk version, repeatedly until a fixed point is
+      -- reached.
+      let
+       recursion_body inputIsTemp numRowsBefore = do
+        liftIO $ putStrLn "Shrink iteration:"
+        tempTableName <- newTempTableName
+        let shrinkStatement = "CREATE TEMPORARY TABLE " <> tempTableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql
+        numRowsAfter <- exportShrink shrinkStatement
+
+ 
+        when inputIsTemp $ do
+            -- Table will be renamed to this rather than explicitly deleted,
+            -- relying on postgres session handling to delete at the end
+            -- of the session. This is so we don't do any explicit DELETEs
+            -- for safety.
+            tempTableName'' <- newTempTableName
+            -- get rid of old temp table to be garbage
+            -- do this if the input table is a temporary table
+            void $ exportShrink $ "ALTER TABLE pg_temp."<> tableName <> " RENAME TO " <> tempTableName''
+
+
+        exportShrink $ "ALTER TABLE pg_temp."<> tempTableName <> " RENAME TO " <> tableName
+        progress $ "After shrink, there are " <> show numRowsAfter <> " rows"
+
+        case numRowsBefore `compare` numRowsAfter of
+          LT -> error "Number of rows increased in shrink - should be impossible"
+          EQ -> return tableName
+          GT -> recursion_body True numRowsAfter
+
+      recursion_body False nb
 
   liftIO $ putStrLn $ "Requires: " <> show (_requires tspec)
   dumpDir <- getDataDir
@@ -295,6 +335,8 @@ processTable tspec = do
   exportTable tableName t'
   importSql $ "\\copy " <> tableName <> " from '" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"
+
+newTempTableName =  (("postgressubsettemp" <>) . T.pack . show) <$> getUnique
 
 exportTable :: T.Text -> T.Text -> AppMonad ()
 exportTable tableName srcTableName = do
