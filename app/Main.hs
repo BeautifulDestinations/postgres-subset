@@ -9,6 +9,7 @@ import Prelude hiding (lookup)
 import Control.Lens ( (^..) )
 import Control.Monad.Reader (runReaderT, ask, ReaderT)
 import Control.Monad.IO.Class (liftIO, MonadIO)
+import Control.Monad.State
 import Data.Aeson ( Value(..) )
 import Data.Aeson.Lens (key, _Bool, _String, _Array, values)
 import qualified Data.ByteString as BS
@@ -195,7 +196,14 @@ sqlAnd Nothing r = r
 sqlAnd l Nothing = l
 sqlAnd (Just l) (Just r) = Just $ "(" <> l <> ") AND (" <> r <> ")"
 
-type AppMonad = ReaderT Environment IO
+type AppMonad = StateT Int (ReaderT Environment IO)
+
+getUnique :: AppMonad Int
+getUnique = do
+  n <- get
+  let new = n+1
+  put new
+  return new
 
 withEnvironment :: AppMonad a -> IO a
 withEnvironment a = do
@@ -213,7 +221,7 @@ withEnvironment a = do
        , _commandline = cli
        , _databaseConnection = conn
        }
-  v <- runReaderT a env
+  v <- runReaderT (evalStateT a 0) env
 
   close conn -- beware of laziness in processing table results here - should do at end?
   hClose importHandle
@@ -272,7 +280,9 @@ processTable tspec = do
     (Just shrinkSql) -> do
       exportNote $ "Shrinking: " <> tableName
       liftIO $ putStrLn $ "Shrink SQL: " <> show shrinkSql
-      exportShrink $ "CREATE TEMPORARY TABLE " <> tableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql
+      tempTableName <- (("postgressubsettemp" <>) . T.pack . show) <$> getUnique
+      exportShrink $ "CREATE TEMPORARY TABLE " <> tempTableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql
+      exportShrink $ "ALTER TABLE pg_temp."<> tempTableName <> " RENAME TO " <> tableName
       -- TODO: later, we should use the number returned by exportShrink
       -- to determine if we need to shrink some more.
       -- see https://github.com/BeautifulDestinations/postgres-subset/issues/2
@@ -309,6 +319,7 @@ exportNote note = progress (T.unpack note)
 
 exportShrink :: T.Text -> AppMonad Int64
 exportShrink s = do
+  progress $ "Running SQL: " <> (T.unpack s)
   conn <- _databaseConnection <$> ask
   liftIO $ execute_ conn (fromString $ T.unpack s)
 
