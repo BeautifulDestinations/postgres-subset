@@ -195,7 +195,9 @@ sqlAnd Nothing r = r
 sqlAnd l Nothing = l
 sqlAnd (Just l) (Just r) = Just $ "(" <> l <> ") AND (" <> r <> ")"
 
-withEnvironment :: ReaderT Environment IO a -> IO a
+type AppMonad = ReaderT Environment IO
+
+withEnvironment :: AppMonad a -> IO a
 withEnvironment a = do
   cli <- execParser $ info (helper <*> commandLineOptions)
                  ( fullDesc
@@ -220,7 +222,7 @@ withEnvironment a = do
 progress :: MonadIO m => String -> m ()
 progress = liftIO . putStrLn
 
-parseTable :: Value -> ReaderT Environment IO TableSpec
+parseTable :: Value -> AppMonad TableSpec
 parseTable (String tableName) = return $ TableSpec
   { _tableName = tableName
   , _shrink = Nothing
@@ -284,7 +286,7 @@ processTable tspec = do
   importSql $ "\\copy " <> tableName <> " from '" <> tableName <> ".dump';"
   importSql $ "ANALYZE " <> tableName <> ";"
 
-exportTable :: T.Text -> T.Text -> ReaderT Environment IO ()
+exportTable :: T.Text -> T.Text -> AppMonad ()
 exportTable tableName srcTableName = do
    let sql = "COPY " <> (fromString $ T.unpack srcTableName) <> " TO STDOUT"
    conn <- _databaseConnection <$> ask
@@ -294,7 +296,7 @@ exportTable tableName srcTableName = do
    drainCopy h
    liftIO $ hClose h
 
-drainCopy :: Handle -> ReaderT Environment IO ()
+drainCopy :: Handle -> AppMonad ()
 drainCopy h = do
   conn <- _databaseConnection <$> ask
   cd <- liftIO $ PSQLC.getCopyData conn
@@ -302,15 +304,15 @@ drainCopy h = do
     PSQLC.CopyOutRow bs -> (liftIO $ BS.hPut h bs) >> drainCopy h
     PSQLC.CopyOutDone n -> progress ("CopyOutDone with " <> (show n) <> " rows")
 
-exportNote :: T.Text -> ReaderT Environment IO ()
+exportNote :: T.Text -> AppMonad ()
 exportNote note = progress (T.unpack note)
 
-exportShrink :: T.Text -> ReaderT Environment IO Int64
+exportShrink :: T.Text -> AppMonad Int64
 exportShrink s = do
   conn <- _databaseConnection <$> ask
   liftIO $ execute_ conn (fromString $ T.unpack s)
 
-importSql :: T.Text -> ReaderT Environment IO ()
+importSql :: T.Text -> AppMonad ()
 importSql s = do
    h <- _importHandle <$> ask
    liftIO $ hPutStrLn h (T.unpack s)
@@ -319,10 +321,10 @@ importSql s = do
 -- | Sorts the supplied tables by the requirements field.
 -- Probably loops forever if the requirements do not form a
 -- partial order.
-orderByRequires :: [TableSpec] -> ReaderT Environment IO [TableSpec]
+orderByRequires :: [TableSpec] -> AppMonad [TableSpec]
 orderByRequires ts = o [] ts
   where
-    o :: [T.Text] -> [TableSpec] -> ReaderT Environment IO [TableSpec]
+    o :: [T.Text] -> [TableSpec] -> AppMonad [TableSpec]
     o _ [] = return []
     o _ [t] = return [t]
     o done (t:ts) = do
