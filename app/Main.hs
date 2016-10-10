@@ -27,6 +27,7 @@ import qualified Data.Vector as V
 import Data.Yaml
 import Database.PostgreSQL.Simple as PSQL
 import Database.PostgreSQL.Simple.Copy as PSQLC
+import Database.PostgreSQL.Simple.Transaction as PSQLT
 import Options.Applicative (strOption, long, metavar, help,
                             execParser, info, helper, fullDesc, progDesc, header)
 import qualified Options.Applicative as Optparse
@@ -227,11 +228,18 @@ withEnvironment a = do
        , _commandline = cli
        , _databaseConnection = conn
        }
-  v <- runReaderT (evalStateT a 0) env
+  v <- withConsistentTransaction conn $ runReaderT (evalStateT a 0) env
 
   close conn -- beware of laziness in processing table results here - should do at end?
   hClose importHandle
   return v
+
+-- | Runs a transaction with a consistent view of the
+--   database so that we don't (for example) generate two
+--   table dumps that violate foreign keys with respect
+--   to each other.
+withConsistentTransaction = PSQLT.withTransactionMode mode
+  where mode = PSQLT.TransactionMode PSQLT.RepeatableRead PSQLT.ReadWrite
 
 progress :: MonadIO m => String -> m ()
 progress = liftIO . putStrLn
