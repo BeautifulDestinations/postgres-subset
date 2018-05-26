@@ -1,44 +1,53 @@
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecursiveDo         #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecursiveDo #-}
 
 module Main where
 
-import Prelude hiding (lookup)
+import           Prelude                                hiding (lookup)
 
-import Control.Lens ( (^..) )
-import Control.Monad.Reader (runReaderT, ask, ReaderT)
-import Control.Monad.IO.Class (liftIO, MonadIO)
-import Control.Monad.State
-import Data.Aeson ( Value(..) )
-import Data.Aeson.Lens (key, _Bool, _String, _Array, values)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
-import Data.Function (on)
-import Data.HashMap.Strict (HashMap(..), elems, keys, lookup)
-import Data.Int (Int64)
-import Data.List (nub, groupBy, intersperse, sortBy, find)
-import Data.Maybe (fromMaybe, isJust)
-import Data.Monoid ( (<>) )
-import Data.String (fromString)
-import qualified Data.Text as T
-import Data.Traversable (for)
-import qualified Data.Vector as V
-import Data.Yaml
-import Database.PostgreSQL.Simple as PSQL
-import Database.PostgreSQL.Simple.Copy as PSQLC
-import Database.PostgreSQL.Simple.Transaction as PSQLT
-import Options.Applicative (strOption, long, metavar, help,
-                            execParser, info, helper, fullDesc, progDesc, header)
-import qualified Options.Applicative as Optparse
-import System.IO (Handle, openFile, IOMode(..), hClose, hPutStrLn)
-import Lib
+import           Control.Lens                           ((^..))
+import           Control.Monad.IO.Class                 (MonadIO, liftIO)
+import           Control.Monad.Reader                   (ReaderT, ask,
+                                                         runReaderT)
+import           Control.Monad.State
+import           Data.Aeson                             (Value (..))
+import           Data.Aeson.Lens                        (key, values, _Array,
+                                                         _Bool, _String)
+import qualified Data.ByteString                        as BS
+import qualified Data.ByteString.Char8                  as BS8
+import           Data.Function                          (on)
+import           Data.HashMap.Strict                    (HashMap (..), elems,
+                                                         keys, lookup)
+import           Data.Int                               (Int64)
+import           Data.List                              (find, groupBy,
+                                                         intersperse, nub,
+                                                         sortBy)
+import           Data.Maybe                             (fromMaybe, isJust)
+import           Data.Monoid                            ((<>))
+import           Data.String                            (fromString)
+import qualified Data.Text                              as T
+import           Data.Traversable                       (for)
+import qualified Data.Vector                            as V
+import           Data.Yaml
+import           Database.PostgreSQL.Simple             as PSQL
+import           Database.PostgreSQL.Simple.Copy        as PSQLC
+import           Database.PostgreSQL.Simple.Transaction as PSQLT
+import           Lib
+import           Options.Applicative                    (execParser, fullDesc,
+                                                         header, help, helper,
+                                                         info, long, metavar,
+                                                         progDesc, strOption)
+import qualified Options.Applicative                    as Optparse
+import           System.IO                              (Handle, IOMode (..),
+                                                         hClose, hPutStrLn,
+                                                         openFile)
 
 data CommandLine = CommandLine
   {
-    _dataDir :: T.Text
+    _dataDir        :: T.Text
   , _tablesFilename :: String
-  , _connStr :: String
+  , _connStr        :: String
   }
 
 commandLineOptions :: Optparse.Parser CommandLine
@@ -57,8 +66,8 @@ commandLineOptions = CommandLine
                 )
 
 data Environment = Environment
-  { _importHandle :: Handle
-  , _commandline :: CommandLine
+  { _importHandle       :: Handle
+  , _commandline        :: CommandLine
   , _databaseConnection :: PSQL.Connection
   }
 
@@ -67,8 +76,8 @@ getDataDir = (_dataDir . _commandline) <$> ask
 
 data TableSpec = TableSpec
   { _tableName :: T.Text,
-    _shrink :: Maybe T.Text,
-    _requires :: [T.Text]
+    _shrink    :: Maybe T.Text,
+    _requires  :: [T.Text]
   } deriving Show
 
 main :: IO ()
@@ -92,9 +101,9 @@ main = do
 
     -- this 'rec' block allows access to the final tableDefs
     -- value in the code that is constructing it.
-    rec  
+    rec
       conn <- _databaseConnection <$> ask
-      dbTableDefs <- liftIO $ query_ conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+      dbTableDefs <- liftIO $ query_ conn "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' and table_type = 'BASE TABLE' "
       liftIO $ print (dbTableDefs :: [[String]])
 
       dbTables <- for dbTableDefs $ \[tableName] -> do
@@ -111,7 +120,7 @@ main = do
     \  ON tc.constraint_name = kcu.constraint_name \
     \  JOIN information_schema.constraint_column_usage AS ccu \
     \  ON ccu.constraint_name = tc.constraint_name \
-    \ WHERE constraint_type = 'FOREIGN KEY' AND tc.table_name=?" 
+    \ WHERE constraint_type = 'FOREIGN KEY' AND tc.table_name=?"
            [tableName]
         liftIO $ putStr "Foreign key definitions: "
         liftIO $ print (fkeys :: [[String]])
@@ -147,10 +156,10 @@ main = do
           -- occur.
           let (Just tableSpec) = find (\table -> _tableName table == foreignTableName) tableDefs
           let shouldShrink = (fk !! 1) == tableName || isJust (_shrink tableSpec)
-          return $ if shouldShrink 
+          return $ if shouldShrink
             then Just $ T.pack $
                      "("
-                  ++     "(" ++ (fk !! 0) ++ " IN (SELECT " ++ (fk !! 2) ++ " FROM " ++ (fk !! 1) ++ ") )" 
+                  ++     "(" ++ (fk !! 0) ++ " IN (SELECT " ++ (fk !! 2) ++ " FROM " ++ (fk !! 1) ++ ") )"
                   ++ " OR ( " ++ fk !! 0 ++ " IS NULL)"  -- TODO: do this only when the fk is nullable, because
                                                          -- it makes the query substantially more expensive
                                                          -- [PERFORMANCE]
@@ -256,8 +265,9 @@ parseTable (Object (l :: HashMap T.Text Value)) = do
   let (Object def) = (head $ elems l)
 
   shrinkSql <- case lookup "shrink" def of
-    Nothing -> do liftIO $ putStrLn "Not shrinking this table"
-                  return Nothing
+    Nothing -> do
+      liftIO $ putStrLn "Aplying default shrink to this table: random() > 0.9"
+      return $ Just "random() > 0.9"
     (Just (String s)) -> do
       liftIO $ putStrLn $ "Shrink SQL: " <> show s
       return $ Just s
@@ -266,7 +276,7 @@ parseTable (Object (l :: HashMap T.Text Value)) = do
 
   let requiresValue = lookup "requires" def
   liftIO $ putStrLn $ "Requires: " <> show requiresValue
-  let requires = case requiresValue of 
+  let requires = case requiresValue of
         Just (String singleRequirement) -> [singleRequirement]
         Just (Array strings) -> map (\(String s) -> s) (V.toList strings)
         Nothing -> []
@@ -314,7 +324,7 @@ processTable tspec = do
         let shrinkStatement = "CREATE TEMPORARY TABLE " <> tempTableName <> " AS SELECT * FROM " <> tableName <> " WHERE " <> shrinkSql
         numRowsAfter <- exportShrink shrinkStatement
 
- 
+
         when inputIsTemp $ do
             -- Table will be renamed to this rather than explicitly deleted,
             -- relying on postgres session handling to delete at the end
